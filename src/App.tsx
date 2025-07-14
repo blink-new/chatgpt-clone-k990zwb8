@@ -280,15 +280,18 @@ function App() {
         }
       )
 
+      // Clear streaming content first, then add assistant message to UI
+      setStreamingContent('')
+      setIsStreaming(false)
+      
       // Create assistant message
       const assistantMessage: Message = {
-        id: `msg_${Date.now() + 1}`,
+        id: `msg_${Date.now()}`,
         role: 'assistant',
         content: fullResponse,
         timestamp: new Date()
       }
-
-      // Add assistant message to UI
+      
       setConversations(prev => prev.map(conv => 
         conv.id === conversationId 
           ? { 
@@ -378,6 +381,10 @@ function App() {
           setStreamingContent(fullResponse)
         }
       )
+
+      // Clear streaming content first, then add assistant message to UI
+      setStreamingContent('')
+      setIsStreaming(false)
 
       // Create new assistant message
       const assistantMessage: Message = {
