@@ -42,7 +42,6 @@ function App() {
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null)
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
-  const [streamingContent, setStreamingContent] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [isDark, setIsDark] = useState(false)
@@ -69,7 +68,7 @@ function App() {
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [currentConversation?.messages, streamingContent])
+  }, [currentConversation?.messages])
 
   useEffect(() => {
     if (isDark) {
@@ -224,12 +223,21 @@ function App() {
       timestamp: new Date()
     }
 
-    // Add user message to UI immediately
+    // Create assistant message placeholder that will be updated during streaming
+    const assistantMessageId = `msg_${Date.now() + 1}`
+    const assistantMessage: Message = {
+      id: assistantMessageId,
+      role: 'assistant',
+      content: '',
+      timestamp: new Date()
+    }
+
+    // Add both user message and empty assistant message to UI immediately
     setConversations(prev => prev.map(conv => 
       conv.id === conversationId 
         ? { 
             ...conv, 
-            messages: [...conv.messages, userMessage],
+            messages: [...conv.messages, userMessage, assistantMessage],
             title: conv.messages.length === 0 ? generateTitle(input) : conv.title,
             updatedAt: new Date()
           }
@@ -240,8 +248,7 @@ function App() {
     setInput('')
     setIsLoading(true)
     setIsStreaming(true)
-    setStreamingContent('')
-
+    
     try {
       // Save user message to database
       await saveMessage(conversationId, 'user', userInput)
@@ -267,7 +274,7 @@ function App() {
 
       let fullResponse = ''
 
-      // Stream AI response
+      // Stream AI response and update the assistant message in real-time
       await blink.ai.streamText(
         {
           messages: conversationHistory,
@@ -276,42 +283,43 @@ function App() {
         },
         (chunk) => {
           fullResponse += chunk
-          setStreamingContent(fullResponse)
+          
+          // Update the assistant message content in real-time
+          setConversations(prev => prev.map(conv => 
+            conv.id === conversationId 
+              ? { 
+                  ...conv, 
+                  messages: conv.messages.map(msg => 
+                    msg.id === assistantMessageId 
+                      ? { ...msg, content: fullResponse }
+                      : msg
+                  ),
+                  updatedAt: new Date()
+                }
+              : conv
+          ))
         }
       )
 
-      // Clear streaming content first, then add assistant message to UI
-      setStreamingContent('')
-      setIsStreaming(false)
-      
-      // Create assistant message
-      const assistantMessage: Message = {
-        id: `msg_${Date.now()}`,
-        role: 'assistant',
-        content: fullResponse,
-        timestamp: new Date()
-      }
-      
-      setConversations(prev => prev.map(conv => 
-        conv.id === conversationId 
-          ? { 
-              ...conv, 
-              messages: [...conv.messages, assistantMessage],
-              updatedAt: new Date()
-            }
-          : conv
-      ))
-
-      // Save assistant message to database
+      // Save the final assistant message to database
       await saveMessage(conversationId, 'assistant', fullResponse)
 
     } catch (error) {
       console.error('Failed to send message:', error)
       toast.error('Failed to send message. Please try again.')
+      
+      // Remove the empty assistant message on error
+      setConversations(prev => prev.map(conv => 
+        conv.id === conversationId 
+          ? { 
+              ...conv, 
+              messages: conv.messages.filter(msg => msg.id !== assistantMessageId)
+            }
+          : conv
+      ))
     } finally {
       setIsLoading(false)
       setIsStreaming(false)
-      setStreamingContent('')
     }
   }
 
@@ -339,12 +347,21 @@ function App() {
 
     if (!lastUserMessage || lastUserMessage.role !== 'user') return
 
-    // Update UI to remove last assistant message
+    // Create new assistant message placeholder
+    const assistantMessageId = `msg_${Date.now()}`
+    const assistantMessage: Message = {
+      id: assistantMessageId,
+      role: 'assistant',
+      content: '',
+      timestamp: new Date()
+    }
+
+    // Update UI to remove last assistant message and add new empty one
     setConversations(prev => prev.map(conv => 
       conv.id === currentConversationId 
         ? { 
             ...conv, 
-            messages: messagesWithoutLast,
+            messages: [...messagesWithoutLast, assistantMessage],
             updatedAt: new Date()
           }
         : conv
@@ -352,8 +369,7 @@ function App() {
 
     setIsLoading(true)
     setIsStreaming(true)
-    setStreamingContent('')
-
+    
     try {
       // Delete the last assistant message from database
       const lastMessage = messages[messages.length - 1]
@@ -369,7 +385,7 @@ function App() {
 
       let fullResponse = ''
 
-      // Stream new AI response
+      // Stream new AI response and update the assistant message in real-time
       await blink.ai.streamText(
         {
           messages: conversationHistory,
@@ -378,43 +394,43 @@ function App() {
         },
         (chunk) => {
           fullResponse += chunk
-          setStreamingContent(fullResponse)
+          
+          // Update the assistant message content in real-time
+          setConversations(prev => prev.map(conv => 
+            conv.id === currentConversationId 
+              ? { 
+                  ...conv, 
+                  messages: conv.messages.map(msg => 
+                    msg.id === assistantMessageId 
+                      ? { ...msg, content: fullResponse }
+                      : msg
+                  ),
+                  updatedAt: new Date()
+                }
+              : conv
+          ))
         }
       )
 
-      // Clear streaming content first, then add assistant message to UI
-      setStreamingContent('')
-      setIsStreaming(false)
-
-      // Create new assistant message
-      const assistantMessage: Message = {
-        id: `msg_${Date.now()}`,
-        role: 'assistant',
-        content: fullResponse,
-        timestamp: new Date()
-      }
-
-      // Add new assistant message to UI
-      setConversations(prev => prev.map(conv => 
-        conv.id === currentConversationId 
-          ? { 
-              ...conv, 
-              messages: [...conv.messages, assistantMessage],
-              updatedAt: new Date()
-            }
-          : conv
-      ))
-
-      // Save new assistant message to database
+      // Save the final assistant message to database
       await saveMessage(currentConversationId!, 'assistant', fullResponse)
 
     } catch (error) {
       console.error('Failed to regenerate response:', error)
       toast.error('Failed to regenerate response')
+      
+      // Remove the empty assistant message on error
+      setConversations(prev => prev.map(conv => 
+        conv.id === currentConversationId 
+          ? { 
+              ...conv, 
+              messages: conv.messages.filter(msg => msg.id !== assistantMessageId)
+            }
+          : conv
+      ))
     } finally {
       setIsLoading(false)
       setIsStreaming(false)
-      setStreamingContent('')
     }
   }
 
@@ -589,9 +605,13 @@ function App() {
                             : 'chatgpt-message-assistant bg-muted'
                         }`}>
                           <p className="whitespace-pre-wrap">{message.content}</p>
+                          {/* Show streaming cursor for assistant messages during streaming */}
+                          {message.role === 'assistant' && isStreaming && (
+                            <div className="inline-block w-2 h-4 bg-[hsl(var(--chatgpt-primary))] animate-pulse ml-1"></div>
+                          )}
                         </div>
                         
-                        {message.role === 'assistant' && (
+                        {message.role === 'assistant' && !isStreaming && (
                           <div className="flex items-center gap-2 mt-2 opacity-0 group-hover:opacity-100 transition-opacity">
                             <Button
                               variant="ghost"
@@ -623,20 +643,7 @@ function App() {
                   </div>
                 ))}
                 
-                {/* Streaming response */}
-                {isStreaming && streamingContent && (
-                  <div className="flex gap-4">
-                    <div className="w-8 h-8 bg-[hsl(var(--chatgpt-primary))] rounded-full flex items-center justify-center flex-shrink-0">
-                      <MessageSquare className="w-4 h-4 text-white" />
-                    </div>
-                    <div className="bg-muted p-4 rounded-2xl max-w-[70%]">
-                      <p className="whitespace-pre-wrap">{streamingContent}</p>
-                      <div className="inline-block w-2 h-4 bg-[hsl(var(--chatgpt-primary))] animate-pulse ml-1"></div>
-                    </div>
-                  </div>
-                )}
-                
-                {/* Loading indicator */}
+                {/* Loading indicator when not streaming but still loading */}
                 {isLoading && !isStreaming && (
                   <div className="flex gap-4">
                     <div className="w-8 h-8 bg-[hsl(var(--chatgpt-primary))] rounded-full flex items-center justify-center flex-shrink-0">
