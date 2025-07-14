@@ -15,8 +15,11 @@ import {
   Moon,
   Settings,
   HelpCircle,
-  User
+  User,
+  Loader2
 } from 'lucide-react'
+import { blink } from './blink/client'
+import toast from 'react-hot-toast'
 
 interface Message {
   id: string
@@ -33,10 +36,14 @@ interface Conversation {
 }
 
 function App() {
+  const [user, setUser] = useState<any>(null)
+  const [loading, setLoading] = useState(true)
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null)
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  const [streamingContent, setStreamingContent] = useState('')
+  const [isStreaming, setIsStreaming] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [isDark, setIsDark] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -44,9 +51,25 @@ function App() {
 
   const currentConversation = conversations.find(c => c.id === currentConversationId)
 
+  // Auth state management
+  useEffect(() => {
+    const unsubscribe = blink.auth.onAuthStateChanged((state) => {
+      setUser(state.user)
+      setLoading(state.isLoading)
+    })
+    return unsubscribe
+  }, [])
+
+  // Load conversations when user is authenticated
+  useEffect(() => {
+    if (user?.id) {
+      loadConversations()
+    }
+  }, [user?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [currentConversation?.messages])
+  }, [currentConversation?.messages, streamingContent])
 
   useEffect(() => {
     if (isDark) {
@@ -56,15 +79,67 @@ function App() {
     }
   }, [isDark])
 
-  const createNewConversation = () => {
+  const loadConversations = async () => {
+    try {
+      const convs = await blink.db.conversations.list({
+        where: { userId: user.id },
+        orderBy: { updatedAt: 'desc' },
+        limit: 50
+      })
+
+      const conversationsWithMessages = await Promise.all(
+        convs.map(async (conv) => {
+          const messages = await blink.db.messages.list({
+            where: { conversationId: conv.id },
+            orderBy: { createdAt: 'asc' }
+          })
+
+          return {
+            id: conv.id,
+            title: conv.title,
+            updatedAt: new Date(conv.updatedAt),
+            messages: messages.map(msg => ({
+              id: msg.id,
+              role: msg.role as 'user' | 'assistant',
+              content: msg.content,
+              timestamp: new Date(msg.createdAt)
+            }))
+          }
+        })
+      )
+
+      setConversations(conversationsWithMessages)
+    } catch (error) {
+      console.error('Failed to load conversations:', error)
+      toast.error('Failed to load conversations')
+    }
+  }
+
+  const createNewConversation = async () => {
+    if (!user?.id) return
+
     const newConversation: Conversation = {
-      id: Date.now().toString(),
+      id: `conv_${Date.now()}`,
       title: 'New Chat',
       messages: [],
       updatedAt: new Date()
     }
-    setConversations(prev => [newConversation, ...prev])
-    setCurrentConversationId(newConversation.id)
+
+    try {
+      await blink.db.conversations.create({
+        id: newConversation.id,
+        userId: user.id,
+        title: newConversation.title,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      })
+
+      setConversations(prev => [newConversation, ...prev])
+      setCurrentConversationId(newConversation.id)
+    } catch (error) {
+      console.error('Failed to create conversation:', error)
+      toast.error('Failed to create new conversation')
+    }
   }
 
   const generateTitle = (firstMessage: string) => {
@@ -73,32 +148,83 @@ function App() {
       : firstMessage
   }
 
+  const updateConversationTitle = async (conversationId: string, title: string) => {
+    try {
+      await blink.db.conversations.update(conversationId, {
+        title,
+        updatedAt: new Date()
+      })
+    } catch (error) {
+      console.error('Failed to update conversation title:', error)
+    }
+  }
+
+  const saveMessage = async (conversationId: string, role: 'user' | 'assistant', content: string) => {
+    const messageId = `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+    
+    try {
+      await blink.db.messages.create({
+        id: messageId,
+        conversationId,
+        userId: user.id,
+        role,
+        content,
+        createdAt: new Date()
+      })
+
+      // Update conversation timestamp
+      await blink.db.conversations.update(conversationId, {
+        updatedAt: new Date()
+      })
+
+      return messageId
+    } catch (error) {
+      console.error('Failed to save message:', error)
+      throw error
+    }
+  }
+
   const sendMessage = async () => {
-    if (!input.trim()) return
+    if (!input.trim() || !user?.id) return
 
     let conversationId = currentConversationId
     
     // Create new conversation if none exists
     if (!conversationId) {
       const newConversation: Conversation = {
-        id: Date.now().toString(),
+        id: `conv_${Date.now()}`,
         title: generateTitle(input),
         messages: [],
         updatedAt: new Date()
       }
-      setConversations(prev => [newConversation, ...prev])
-      conversationId = newConversation.id
-      setCurrentConversationId(conversationId)
+
+      try {
+        await blink.db.conversations.create({
+          id: newConversation.id,
+          userId: user.id,
+          title: newConversation.title,
+          createdAt: new Date(),
+          updatedAt: new Date()
+        })
+
+        setConversations(prev => [newConversation, ...prev])
+        conversationId = newConversation.id
+        setCurrentConversationId(conversationId)
+      } catch (error) {
+        console.error('Failed to create conversation:', error)
+        toast.error('Failed to create conversation')
+        return
+      }
     }
 
     const userMessage: Message = {
-      id: Date.now().toString(),
+      id: `msg_${Date.now()}`,
       role: 'user',
       content: input,
       timestamp: new Date()
     }
 
-    // Add user message
+    // Add user message to UI immediately
     setConversations(prev => prev.map(conv => 
       conv.id === conversationId 
         ? { 
@@ -110,18 +236,59 @@ function App() {
         : conv
     ))
 
+    const userInput = input
     setInput('')
     setIsLoading(true)
+    setIsStreaming(true)
+    setStreamingContent('')
 
-    // Simulate AI response
-    setTimeout(() => {
+    try {
+      // Save user message to database
+      await saveMessage(conversationId, 'user', userInput)
+
+      // Update conversation title if it's the first message
+      const conversation = conversations.find(c => c.id === conversationId)
+      if (conversation && conversation.messages.length === 0) {
+        await updateConversationTitle(conversationId, generateTitle(userInput))
+      }
+
+      // Get conversation history for context
+      const messages = currentConversation?.messages || []
+      const conversationHistory = messages.map(msg => ({
+        role: msg.role,
+        content: msg.content
+      }))
+
+      // Add the new user message
+      conversationHistory.push({
+        role: 'user',
+        content: userInput
+      })
+
+      let fullResponse = ''
+
+      // Stream AI response
+      await blink.ai.streamText(
+        {
+          messages: conversationHistory,
+          model: 'gpt-4o-mini',
+          maxTokens: 2000
+        },
+        (chunk) => {
+          fullResponse += chunk
+          setStreamingContent(fullResponse)
+        }
+      )
+
+      // Create assistant message
       const assistantMessage: Message = {
-        id: (Date.now() + 1).toString(),
+        id: `msg_${Date.now() + 1}`,
         role: 'assistant',
-        content: `I'm a ChatGPT clone interface. You said: "${userMessage.content}"\n\nThis is a demo response. In a real implementation, this would connect to an AI service like OpenAI's API to generate intelligent responses.`,
+        content: fullResponse,
         timestamp: new Date()
       }
 
+      // Add assistant message to UI
       setConversations(prev => prev.map(conv => 
         conv.id === conversationId 
           ? { 
@@ -131,8 +298,18 @@ function App() {
             }
           : conv
       ))
+
+      // Save assistant message to database
+      await saveMessage(conversationId, 'assistant', fullResponse)
+
+    } catch (error) {
+      console.error('Failed to send message:', error)
+      toast.error('Failed to send message. Please try again.')
+    } finally {
       setIsLoading(false)
-    }, 1000)
+      setIsStreaming(false)
+      setStreamingContent('')
+    }
   }
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -144,11 +321,143 @@ function App() {
 
   const copyMessage = (content: string) => {
     navigator.clipboard.writeText(content)
+    toast.success('Message copied to clipboard')
   }
 
-  const regenerateResponse = () => {
-    // In a real app, this would regenerate the last assistant message
-    console.log('Regenerate response')
+  const regenerateResponse = async () => {
+    if (!currentConversation || !user?.id) return
+
+    const messages = currentConversation.messages
+    if (messages.length < 2) return
+
+    // Remove the last assistant message
+    const messagesWithoutLast = messages.slice(0, -1)
+    const lastUserMessage = messagesWithoutLast[messagesWithoutLast.length - 1]
+
+    if (!lastUserMessage || lastUserMessage.role !== 'user') return
+
+    // Update UI to remove last assistant message
+    setConversations(prev => prev.map(conv => 
+      conv.id === currentConversationId 
+        ? { 
+            ...conv, 
+            messages: messagesWithoutLast,
+            updatedAt: new Date()
+          }
+        : conv
+    ))
+
+    setIsLoading(true)
+    setIsStreaming(true)
+    setStreamingContent('')
+
+    try {
+      // Delete the last assistant message from database
+      const lastMessage = messages[messages.length - 1]
+      if (lastMessage.role === 'assistant') {
+        await blink.db.messages.delete(lastMessage.id)
+      }
+
+      // Prepare conversation history
+      const conversationHistory = messagesWithoutLast.map(msg => ({
+        role: msg.role,
+        content: msg.content
+      }))
+
+      let fullResponse = ''
+
+      // Stream new AI response
+      await blink.ai.streamText(
+        {
+          messages: conversationHistory,
+          model: 'gpt-4o-mini',
+          maxTokens: 2000
+        },
+        (chunk) => {
+          fullResponse += chunk
+          setStreamingContent(fullResponse)
+        }
+      )
+
+      // Create new assistant message
+      const assistantMessage: Message = {
+        id: `msg_${Date.now()}`,
+        role: 'assistant',
+        content: fullResponse,
+        timestamp: new Date()
+      }
+
+      // Add new assistant message to UI
+      setConversations(prev => prev.map(conv => 
+        conv.id === currentConversationId 
+          ? { 
+              ...conv, 
+              messages: [...conv.messages, assistantMessage],
+              updatedAt: new Date()
+            }
+          : conv
+      ))
+
+      // Save new assistant message to database
+      await saveMessage(currentConversationId!, 'assistant', fullResponse)
+
+    } catch (error) {
+      console.error('Failed to regenerate response:', error)
+      toast.error('Failed to regenerate response')
+    } finally {
+      setIsLoading(false)
+      setIsStreaming(false)
+      setStreamingContent('')
+    }
+  }
+
+  const deleteConversation = async (conversationId: string) => {
+    try {
+      await blink.db.conversations.delete(conversationId)
+      setConversations(prev => prev.filter(c => c.id !== conversationId))
+      
+      if (currentConversationId === conversationId) {
+        setCurrentConversationId(null)
+      }
+      
+      toast.success('Conversation deleted')
+    } catch (error) {
+      console.error('Failed to delete conversation:', error)
+      toast.error('Failed to delete conversation')
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <div className="flex items-center gap-2">
+          <Loader2 className="w-6 h-6 animate-spin" />
+          <span>Loading...</span>
+        </div>
+      </div>
+    )
+  }
+
+  if (!user) {
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <div className="text-center">
+          <div className="w-16 h-16 mx-auto mb-4 bg-[hsl(var(--chatgpt-primary))] rounded-full flex items-center justify-center">
+            <MessageSquare className="w-8 h-8 text-white" />
+          </div>
+          <h1 className="text-2xl font-semibold mb-2">Welcome to ChatGPT Clone</h1>
+          <p className="text-[hsl(var(--chatgpt-text-secondary))] mb-4">
+            Please sign in to start chatting with AI
+          </p>
+          <Button 
+            onClick={() => blink.auth.login()}
+            className="bg-[hsl(var(--chatgpt-primary))] hover:bg-[hsl(var(--chatgpt-primary-hover))]"
+          >
+            Sign In
+          </Button>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -169,17 +478,26 @@ function App() {
         <ScrollArea className="flex-1 px-3">
           <div className="space-y-1">
             {conversations.map((conversation) => (
-              <Button
-                key={conversation.id}
-                onClick={() => setCurrentConversationId(conversation.id)}
-                variant="ghost"
-                className={`w-full justify-start text-left h-auto p-3 chatgpt-sidebar-item ${
-                  currentConversationId === conversation.id ? 'bg-[hsl(var(--chatgpt-sidebar-hover))]' : ''
-                }`}
-              >
-                <MessageSquare className="w-4 h-4 mr-2 flex-shrink-0" />
-                <span className="truncate text-sm">{conversation.title}</span>
-              </Button>
+              <div key={conversation.id} className="group relative">
+                <Button
+                  onClick={() => setCurrentConversationId(conversation.id)}
+                  variant="ghost"
+                  className={`w-full justify-start text-left h-auto p-3 chatgpt-sidebar-item ${
+                    currentConversationId === conversation.id ? 'bg-[hsl(var(--chatgpt-sidebar-hover))]' : ''
+                  }`}
+                >
+                  <MessageSquare className="w-4 h-4 mr-2 flex-shrink-0" />
+                  <span className="truncate text-sm">{conversation.title}</span>
+                </Button>
+                <Button
+                  onClick={() => deleteConversation(conversation.id)}
+                  variant="ghost"
+                  size="sm"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity h-6 w-6 p-0 hover:bg-red-500 hover:text-white"
+                >
+                  <X className="w-3 h-3" />
+                </Button>
+              </div>
             ))}
           </div>
         </ScrollArea>
@@ -203,9 +521,13 @@ function App() {
             {isDark ? <Sun className="w-4 h-4 mr-2" /> : <Moon className="w-4 h-4 mr-2" />}
             {isDark ? 'Light mode' : 'Dark mode'}
           </Button>
-          <Button variant="ghost" className="w-full justify-start chatgpt-sidebar-item">
+          <Button 
+            variant="ghost" 
+            className="w-full justify-start chatgpt-sidebar-item"
+            onClick={() => blink.auth.logout()}
+          >
             <User className="w-4 h-4 mr-2" />
-            My account
+            Sign out ({user.email})
           </Button>
         </div>
       </div>
@@ -277,6 +599,7 @@ function App() {
                               size="sm"
                               onClick={regenerateResponse}
                               className="h-8 px-2"
+                              disabled={isLoading}
                             >
                               <RotateCcw className="w-3 h-3" />
                             </Button>
@@ -293,7 +616,21 @@ function App() {
                   </div>
                 ))}
                 
-                {isLoading && (
+                {/* Streaming response */}
+                {isStreaming && streamingContent && (
+                  <div className="flex gap-4">
+                    <div className="w-8 h-8 bg-[hsl(var(--chatgpt-primary))] rounded-full flex items-center justify-center flex-shrink-0">
+                      <MessageSquare className="w-4 h-4 text-white" />
+                    </div>
+                    <div className="bg-muted p-4 rounded-2xl max-w-[70%]">
+                      <p className="whitespace-pre-wrap">{streamingContent}</p>
+                      <div className="inline-block w-2 h-4 bg-[hsl(var(--chatgpt-primary))] animate-pulse ml-1"></div>
+                    </div>
+                  </div>
+                )}
+                
+                {/* Loading indicator */}
+                {isLoading && !isStreaming && (
                   <div className="flex gap-4">
                     <div className="w-8 h-8 bg-[hsl(var(--chatgpt-primary))] rounded-full flex items-center justify-center flex-shrink-0">
                       <MessageSquare className="w-4 h-4 text-white" />
@@ -332,7 +669,11 @@ function App() {
                 size="sm"
                 className="absolute right-2 bottom-2 w-8 h-8 p-0 bg-[hsl(var(--chatgpt-primary))] hover:bg-[hsl(var(--chatgpt-primary-hover))] disabled:opacity-50"
               >
-                <Send className="w-4 h-4" />
+                {isLoading ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Send className="w-4 h-4" />
+                )}
               </Button>
             </div>
             <p className="text-xs text-[hsl(var(--chatgpt-text-secondary))] text-center mt-2">
