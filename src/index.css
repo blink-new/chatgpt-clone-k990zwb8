@@ -1,0 +1,98 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 240 10% 3.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 3.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 3.9%;
+    --primary: 158 64% 52%;
+    --primary-foreground: 0 0% 98%;
+    --secondary: 240 4.8% 95.9%;
+    --secondary-foreground: 240 5.9% 10%;
+    --muted: 240 4.8% 95.9%;
+    --muted-foreground: 240 3.8% 46.1%;
+    --accent: 240 4.8% 95.9%;
+    --accent-foreground: 240 5.9% 10%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 5.9% 90%;
+    --input: 240 5.9% 90%;
+    --ring: 240 10% 3.9%;
+    --radius: 0.5rem;
+    
+    /* ChatGPT specific colors */
+    --chatgpt-primary: 158 64% 52%;
+    --chatgpt-primary-hover: 158 64% 45%;
+    --chatgpt-sidebar: 0 0% 97%;
+    --chatgpt-sidebar-hover: 0 0% 94%;
+    --chatgpt-border: 0 0% 90%;
+    --chatgpt-text-secondary: 0 0% 45%;
+  }
+
+  .dark {
+    --background: 212 13% 11%;
+    --foreground: 0 0% 98%;
+    --card: 212 13% 11%;
+    --card-foreground: 0 0% 98%;
+    --popover: 212 13% 11%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 158 64% 52%;
+    --primary-foreground: 0 0% 98%;
+    --secondary: 217 19% 18%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 217 19% 18%;
+    --muted-foreground: 240 5% 64.9%;
+    --accent: 217 19% 18%;
+    --accent-foreground: 0 0% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 217 19% 18%;
+    --input: 217 19% 18%;
+    --ring: 240 4.9% 83.9%;
+    
+    /* ChatGPT dark mode colors */
+    --chatgpt-primary: 158 64% 52%;
+    --chatgpt-primary-hover: 158 64% 45%;
+    --chatgpt-sidebar: 212 13% 11%;
+    --chatgpt-sidebar-hover: 217 19% 18%;
+    --chatgpt-border: 217 19% 18%;
+    --chatgpt-text-secondary: 0 0% 65%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans;
+
+    font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+}
+
+@layer components {
+  .chatgpt-sidebar {
+    @apply bg-[hsl(var(--chatgpt-sidebar))] border-r border-[hsl(var(--chatgpt-border))];
+  }
+  
+  .chatgpt-sidebar-item {
+    @apply hover:bg-[hsl(var(--chatgpt-sidebar-hover))] transition-colors duration-200;
+  }
+  
+  .chatgpt-message-user {
+    @apply bg-[hsl(var(--chatgpt-primary))] text-white;
+  }
+  
+  .chatgpt-message-assistant {
+    @apply bg-transparent;
+  }
+}
